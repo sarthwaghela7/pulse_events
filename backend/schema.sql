@@ -1,12 +1,19 @@
 create extension if not exists pgcrypto;
 
 create table if not exists public.profiles (
-  id uuid primary key references auth.users(id) on delete cascade,
+  id uuid primary key,
   email text not null,
   full_name text,
   role text not null default 'user' check (role in ('user','artist','admin')),
   created_at timestamptz not null default now()
 );
+create table if not exists public.app_accounts (
+  id uuid primary key references public.profiles(id) on delete cascade,
+  email text not null,
+  password_hash text not null,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists app_accounts_email_unique on public.app_accounts(lower(email));
 create table if not exists public.artists (
   id uuid primary key default gen_random_uuid(), user_id uuid not null unique references public.profiles(id) on delete cascade,
   name text not null, category text not null, bio text, city text, price_per_event numeric(10,2),
@@ -29,18 +36,15 @@ create table if not exists public.reviews (
   rating int not null check (rating between 1 and 5), comment text, created_at timestamptz not null default now(), unique (booking_id)
 );
 
-create or replace function public.handle_new_user() returns trigger language plpgsql security definer set search_path = public as $$
-begin insert into public.profiles (id, email, full_name) values (new.id, coalesce(new.email, ''), new.raw_user_meta_data->>'full_name') on conflict (id) do nothing; return new; end; $$;
-drop trigger if exists on_auth_user_created on auth.users;
-create trigger on_auth_user_created after insert on auth.users for each row execute procedure public.handle_new_user();
-
 alter table public.profiles enable row level security;
+alter table public.app_accounts enable row level security;
 alter table public.artists enable row level security;
 alter table public.artist_media enable row level security;
 alter table public.bookings enable row level security;
 alter table public.reviews enable row level security;
 
 create policy "profiles_public_read" on public.profiles for select using (true);
+revoke all on public.app_accounts from anon, authenticated;
 create policy "profiles_self_insert" on public.profiles for insert with check (auth.uid() = id);
 create policy "profiles_self_update" on public.profiles for update using (auth.uid() = id) with check (auth.uid() = id);
 create policy "artists_public_read" on public.artists for select using (true);

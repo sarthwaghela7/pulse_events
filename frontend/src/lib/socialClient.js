@@ -45,11 +45,10 @@ export const socialClient = {
       write('comments', read('comments').filter(item => item.post_id !== postId))
       return ok({ id: postId })
     }
-    const { data, error } = await supabase.auth.getUser()
-    if (error || !data.user) return fail('Sign in to delete your post.', 'AUTH_REQUIRED')
-    const result = await supabase.from('posts').delete().eq('id', postId).eq('author_id', data.user.id).select('id').maybeSingle()
-    if (result.error) return result
-    return result.data ? ok(result.data) : fail('Post not found or not owned by you.', 'FORBIDDEN')
+    const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'}/api/posts/${postId}`, { method: 'DELETE', credentials: 'include' })
+    if (response.ok) return ok({ id: postId })
+    const body = await response.json().catch(() => ({}))
+    return fail(body.detail?.message || body.detail || 'Could not delete this post.', response.status === 401 ? 'AUTH_REQUIRED' : 'FORBIDDEN')
   },
   async addArt(ownerId, category) {
     if(!categories.includes(category))return fail('Choose an available art category.')
@@ -92,8 +91,7 @@ export const socialClient = {
   async startArtistConversation(artist, viewer) {
     if(!viewer || artist.user_id === viewer.id)return fail('Choose another artist to message.');
     if(!demoMode){
-      const {data} = await supabase.auth.getSession();
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'}/api/conversations`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${data.session?.access_token}`},body:JSON.stringify({user_id:artist.user_id})});
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'}/api/conversations`,{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:artist.user_id})});
       const body = await response.json();
       return response.ok ? ok(body) : fail(body.detail?.message || 'Could not open this conversation.');
     }

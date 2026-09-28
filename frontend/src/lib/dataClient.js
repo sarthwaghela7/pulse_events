@@ -3,6 +3,7 @@ import { categories, categoryFields } from './categories'
 import theme from '../theme'
 
 export const demoMode = import.meta.env.VITE_DEMO_MODE === 'true'
+const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
 const PREFIX = 'evntra-demo-v1-'
 const seedNames = {
   Singer: ['Aarav Mehta', 'Mira Kapoor', 'Riya Sen', 'Kabir Sethi', 'Ananya Rao'],
@@ -47,6 +48,22 @@ const read = (name, fallback) => {
 const write = (name, value) => localStorage.setItem(PREFIX + name, JSON.stringify(value))
 const result = data => ({ data, error: null })
 const failure = message => ({ data: null, error: { message } })
+
+async function authRequest(path, options = {}) {
+  try {
+    const response = await fetch(`${API_URL}/auth/${path}`, {
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', ...options.headers },
+      ...options,
+    })
+    if (response.status === 204) return result(null)
+    const body = await response.json().catch(() => ({}))
+    if (!response.ok) return failure(typeof body.detail === 'string' ? body.detail : body.detail?.message || 'Authentication failed.')
+    return result(body)
+  } catch {
+    return failure('Could not reach the authentication server.')
+  }
+}
 
 function demoMediaStore(mode, value) {
   return new Promise((resolve, reject) => {
@@ -123,14 +140,26 @@ let listeners = new Set()
 const broadcast = user => listeners.forEach(listener => listener(user))
 
 export const authClient = {
-  async getSession() { return demoMode ? result({ session: read('session', null) ? { user: read('session', null) } : null }) : supabase.auth.getSession() },
+  async getSession() {
+    if (demoMode) return result({ session: read('session', null) ? { user: read('session', null) } : null })
+    const response = await authRequest('session')
+    if (response.error) { localStorage.removeItem(PREFIX + 'session'); return result({ session: null }) }
+    write('session', response.data.user)
+    return result({ session: { user: response.data.user } })
+  },
   subscribe(listener) {
     if (demoMode) { listeners.add(listener); return () => listeners.delete(listener) }
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => listener(session?.user || null))
-    return () => data.subscription.unsubscribe()
+    listeners.add(listener)
+    return () => listeners.delete(listener)
   },
   async signIn(email, password) {
-    if (!demoMode) return supabase.auth.signInWithPassword({ email, password })
+    if (!demoMode) {
+      const response = await authRequest('signin', { method: 'POST', body: JSON.stringify({ email: email.trim(), password }) })
+      if (response.error) return response
+      const user = response.data.user
+      write('session', user); broadcast(user)
+      return result({ user, session: { user } })
+    }
     const account = accounts().find(item => item.email.toLowerCase() === email.trim().toLowerCase())
     const valid = account && (account.password === password || (account.passwordHash && account.passwordHash === await hashPassword(password, account.salt)))
     if (!valid) return failure('Incorrect email or password.')
@@ -141,7 +170,13 @@ export const authClient = {
   async signUp(email, password) {
     const normalizedEmail = email.trim()
     const displayName = normalizedEmail.split('@')[0]
-    if (!demoMode) return supabase.auth.signUp({ email: normalizedEmail, password, options: { data: { full_name: displayName } } })
+    if (!demoMode) {
+      const response = await authRequest('signup', { method: 'POST', body: JSON.stringify({ email: normalizedEmail, password }) })
+      if (response.error) return response
+      const user = response.data.user
+      write('session', user); broadcast(user)
+      return result({ user, session: { user } })
+    }
     if (accounts().some(item => item.email.toLowerCase() === normalizedEmail.toLowerCase())) return failure('An account with this email already exists.')
     const salt = crypto.randomUUID()
     const user = { id: crypto.randomUUID(), email: normalizedEmail, full_name: displayName, salt, passwordHash: await hashPassword(password, salt) }
@@ -151,7 +186,12 @@ export const authClient = {
     return result({ user: sessionUser, session: { user: sessionUser } })
   },
   async signOut() {
-    if (!demoMode) return supabase.auth.signOut()
+    if (!demoMode) {
+      const response = await authRequest('signout', { method: 'POST' })
+      if (response.error) return response
+      localStorage.removeItem(PREFIX + 'session'); broadcast(null)
+      return result(null)
+    }
     localStorage.removeItem(PREFIX + 'session'); broadcast(null)
     return result(null)
   },
