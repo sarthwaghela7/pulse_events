@@ -138,11 +138,13 @@ export const authClient = {
     write('session', user); broadcast(user)
     return result({ user, session: { user } })
   },
-  async signUp(email, password, name) {
-    if (!demoMode) return supabase.auth.signUp({ email, password, options: { data: { full_name: name } } })
-    if (accounts().some(item => item.email.toLowerCase() === email.trim().toLowerCase())) return failure('An account with this email already exists.')
+  async signUp(email, password) {
+    const normalizedEmail = email.trim()
+    const displayName = normalizedEmail.split('@')[0]
+    if (!demoMode) return supabase.auth.signUp({ email: normalizedEmail, password, options: { data: { full_name: displayName } } })
+    if (accounts().some(item => item.email.toLowerCase() === normalizedEmail.toLowerCase())) return failure('An account with this email already exists.')
     const salt = crypto.randomUUID()
-    const user = { id: crypto.randomUUID(), email: email.trim(), full_name: name.trim(), salt, passwordHash: await hashPassword(password, salt) }
+    const user = { id: crypto.randomUUID(), email: normalizedEmail, full_name: displayName, salt, passwordHash: await hashPassword(password, salt) }
     write('accounts', [...read('accounts', []), user])
     const sessionUser = { id: user.id, email: user.email, user_metadata: { full_name: user.full_name } }
     write('session', sessionUser); broadcast(sessionUser)
